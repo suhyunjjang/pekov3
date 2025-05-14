@@ -1,3 +1,7 @@
+"""
+커스텀 pyqtgraph 플롯 아이템(캔들스틱, 날짜 축 등)을 정의하는 모듈
+"""
+
 import pyqtgraph as pg
 from PyQt6.QtCore import QRectF, QPointF
 from PyQt6.QtGui import QPainter # QBrush, QPen are used via pg.mkBrush/mkPen

@@ -1,9 +1,8 @@
 import sys
-import os
-from PyQt6.QtWidgets import QApplication
 import pyqtgraph as pg
+from PyQt6.QtWidgets import QApplication
 
-from ui_components import MainWindow
+from ui.app import MainWindow
 # Removed unused imports like ccxt, ccxt.pro, asyncio, threading, pandas, etc.,
 # as they are now handled within their respective modules (ui_components, data_worker)
 

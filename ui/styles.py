@@ -1,0 +1,18 @@
+"""
+UI 컴포넌트의 스타일 정의를 모아둔 모듈
+"""
+
+from config.settings import (
+    ACTIVE_BUTTON_STYLE, 
+    ACTIVE_BOLLINGER_BUTTON_STYLE, 
+    CONSOLE_STYLE
+)
+
+# CCI 버튼 활성화 스타일
+CCI_BUTTON_ACTIVE_STYLE = ACTIVE_BUTTON_STYLE
+
+# 볼린저 밴드 버튼 활성화 스타일
+BOLLINGER_BUTTON_ACTIVE_STYLE = ACTIVE_BOLLINGER_BUTTON_STYLE
+
+# 콘솔 출력 스타일
+CONSOLE_OUTPUT_STYLE = CONSOLE_STYLE 

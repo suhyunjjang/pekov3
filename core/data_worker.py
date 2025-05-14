@@ -1,3 +1,7 @@
+"""
+WebSocket 및 REST API를 통한 데이터 수집을 처리하는 워커 클래스를 정의하는 모듈
+"""
+
 import ccxt # For initial REST load if ccxt.pro not used for it
 import ccxt.pro as ccxtpro # For WebSocket
 import asyncio
