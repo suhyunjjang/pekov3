@@ -42,6 +42,3 @@ logs/
 # OS 관련 파일
 .DS_Store
 Thumbs.db
-
-# 백업 파일
-backup/

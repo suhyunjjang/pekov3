@@ -17,29 +17,14 @@ class ChartMixin:
     
     def init_charts(self):
         """차트 초기화"""
-        # 메인 차트와 CCI 차트를 담을 스플리터 생성
-        self.chart_splitter = self.create_chart_splitter()
+        # chart_splitter는 더 이상 사용하지 않음 (app.py에서 레이아웃 설정)
         
-        # 메인 차트와 CCI 차트를 위한 개별 위젯 생성
-        self.main_chart_widget = pg.GraphicsLayoutWidget()
-        self.cci_chart_widget = pg.GraphicsLayoutWidget()
-        
-        # 스플리터에 차트 위젯 추가
-        self.chart_splitter.addWidget(self.main_chart_widget)
-        self.chart_splitter.addWidget(self.cci_chart_widget)
-        
-        # 스플리터 사이즈 비율 설정 (메인 차트 : CCI 차트 = 3:1)
-        self.update_chart_splitter_sizes()
-        
-        # CCI 차트는 기본적으로 표시
-        self.cci_chart_widget.setVisible(self.show_cci)
-        
-        # 메인 캔들차트와 볼린저밴드를 표시할 윗 영역
+        # 메인 캔들차트를 위한 설정
         self.date_axis = DateAxisItem(orientation='bottom')
         self.chart_widget = self.main_chart_widget.addPlot(row=0, col=0, axisItems={'bottom': self.date_axis})
         self.plot_item = self.chart_widget
         
-        # CCI 지표를 위한 아래 위젯
+        # CCI 지표를 위한 설정
         self.cci_date_axis = DateAxisItem(orientation='bottom')
         self.cci_plot_item = self.cci_chart_widget.addPlot(row=0, col=0, axisItems={'bottom': self.cci_date_axis})
         
@@ -67,17 +52,6 @@ class ChartMixin:
         # Connect mouse signals - 메인 차트와 CCI 차트 모두 연결
         self.main_chart_widget.scene().sigMouseMoved.connect(self.mouse_moved_on_chart)
         self.cci_chart_widget.scene().sigMouseMoved.connect(self.mouse_moved_on_chart)
-    
-    def create_chart_splitter(self):
-        """차트 스플리터 생성"""
-        return pg.QtWidgets.QSplitter(Qt.Orientation.Vertical)
-    
-    def update_chart_splitter_sizes(self):
-        """차트 스플리터 크기 비율 업데이트"""
-        total_height = 400  # 예상 총 높이 (실제 값은 나중에 조정됨)
-        main_height = int(total_height * 0.75)
-        cci_height = total_height - main_height
-        self.chart_splitter.setSizes([main_height, cci_height])
     
     def setup_main_chart(self):
         """메인 차트 설정"""
@@ -244,15 +218,22 @@ class ChartMixin:
             self.cci_curve = None
     
     def reset_chart_view(self):
-        """Reset the chart view to automatically fit all data"""
+        """Reset the chart view to display the most recent 150 candles"""
         # 로그 스케일 모드 비활성화 - 항상 선형 스케일 사용
         self.plot_item.getViewBox().setLogMode(False, False)
         
-        self.chart_widget.autoRange()
-        if self.show_cci:
-            self.cci_plot_item.autoRange()
-        print(f"차트 뷰가 초기화되었습니다.")
-        self.append_log("차트 뷰가 초기화되었습니다.")
+        # 최근 150개 캔들로 확대
+        if self.detailed_candle_data and len(self.detailed_candle_data) > 0:
+            self.zoom_to_recent_candles(150)
+            print(f"차트 뷰가 최근 150개 캔들로 초기화되었습니다.")
+            self.append_log("차트 뷰가 최근 150개 캔들로 초기화되었습니다.")
+        else:
+            # 데이터가 없는 경우 기본 autoRange 적용
+            self.chart_widget.autoRange()
+            if self.show_cci:
+                self.cci_plot_item.autoRange()
+            print(f"데이터가 없어 전체 범위로 초기화되었습니다.")
+            self.append_log("데이터가 없어 전체 범위로 초기화되었습니다.")
     
     def toggle_auto_scale(self):
         """Toggle between auto-scale mode (visible candles only) and default scaling"""
@@ -273,9 +254,9 @@ class ChartMixin:
         else:
             # Reset button style
             self.auto_scale_button.setStyleSheet("")
-            self.reset_chart_view()  # Reset to show all data when deactivated
-            print("오토스케일 비활성화: 전체 데이터가 표시됩니다.")
-            self.append_log("오토스케일 비활성화: 전체 데이터가 표시됩니다.")
+            self.reset_chart_view()  # Reset to show recent 150 candles when deactivated
+            print("오토스케일 비활성화: 최근 150개 캔들이 표시됩니다.")
+            self.append_log("오토스케일 비활성화: 최근 150개 캔들이 표시됩니다.")
     
     def on_range_changed(self, view_box, range_rect):
         """Called when the user pans or zooms the chart"""
@@ -326,4 +307,58 @@ class ChartMixin:
             min_price <= self.current_price_line.value() <= max_price):
             self.current_price_line.setValue(self.current_price_line.value())
             
-        print(f"오토스케일 적용: 보이는 캔들 {len(visible_candles)}개에 맞게 Y축을 조정했습니다.") 
+        print(f"오토스케일 적용: 보이는 캔들 {len(visible_candles)}개에 맞게 Y축을 조정했습니다.")
+    
+    def zoom_to_recent_candles(self, num_candles=150):
+        """최근 X개의 캔들만 보이도록 차트를 확대합니다"""
+        if not self.detailed_candle_data or len(self.detailed_candle_data) <= 1:
+            return
+            
+        # 데이터를 시간순으로 정렬 (이미 정렬되어 있겠지만 확실히 하기 위해)
+        sorted_data = sorted(self.detailed_candle_data, key=lambda d: d['time_axis_val'])
+        
+        # 표시할 캔들 수가 전체 캔들 수보다 많으면 모든 캔들을 표시
+        candles_to_show = min(num_candles, len(sorted_data))
+        
+        if candles_to_show < len(sorted_data):
+            # 최근 X개 캔들만 선택 (리스트의 마지막 X개 요소)
+            target_candles = sorted_data[-candles_to_show:]
+            
+            # 시간(X축) 범위 계산
+            x_min = target_candles[0]['time_axis_val']
+            x_max = target_candles[-1]['time_axis_val']
+            
+            # 각 캔들의 타임프레임에 따른 추가 여백 계산 (오른쪽에 여유 공간 추가)
+            if hasattr(self.candlestick_item, 'bar_width_seconds'):
+                padding = self.candlestick_item.bar_width_seconds * 5  # 캔들 5개 정도의 여유 공간
+            else:
+                # 기본값으로 마지막 캔들 간격의 5배 정도의 여유 공간
+                if len(target_candles) > 1:
+                    padding = (target_candles[-1]['time_axis_val'] - target_candles[-2]['time_axis_val']) * 5
+                else:
+                    padding = 3600  # 기본값 (1시간)
+                
+            # 가격(Y축) 범위 계산
+            min_price = min(d['low'] for d in target_candles)
+            max_price = max(d['high'] for d in target_candles)
+            
+            # 가격 범위에 10% 여백 추가
+            price_range = max_price - min_price
+            min_price = min_price - price_range * 0.05
+            max_price = max_price + price_range * 0.05
+            
+            # ViewBox에 범위 설정
+            view_box = self.plot_item.getViewBox()
+            view_box.setRange(QRectF(x_min, min_price, x_max - x_min + padding, max_price - min_price), padding=0)
+            
+            print(f"차트가 최근 {candles_to_show}개 캔들로 확대되었습니다.")
+            
+            # CCI 차트도 동일한 X 범위로 설정 (Y 범위는 자동)
+            if self.show_cci:
+                cci_view_box = self.cci_plot_item.getViewBox()
+                cci_y_range = cci_view_box.viewRange()[1]
+                cci_view_box.setRange(QRectF(x_min, cci_y_range[0], x_max - x_min + padding, cci_y_range[1] - cci_y_range[0]), padding=0)
+        else:
+            # 캔들 수가 적으면 전체 데이터 표시
+            self.reset_chart_view()
+            print(f"전체 {len(sorted_data)}개 캔들이 표시됩니다 (최대 {num_candles}개 지정).") 

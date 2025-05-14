@@ -66,11 +66,11 @@ class MainWindow(QMainWindow, ChartMixin, IndicatorsMixin):
         self.rest_exchange = self.exchange_manager.rest_exchange
         self.exchange = self.exchange_manager.ws_exchange
         
-        # 차트 초기화 (ChartMixin에서 제공) - UI 초기화 전에 수행
-        self.init_charts()
-        
-        # UI 초기화
+        # UI 초기화 - 차트 위젯 생성
         self.init_ui()
+        
+        # 차트 초기화 (ChartMixin에서 제공) - UI 생성 이후에 실행
+        self.init_charts()
         
         # 콘솔 출력 리디렉션
         self.redirect_std_streams()
@@ -140,8 +140,6 @@ class MainWindow(QMainWindow, ChartMixin, IndicatorsMixin):
         self.cci_curve = None
         self.cci_current_line = None
         self.cci_data = []
-        self.cci_buy_markers = []
-        self.cci_sell_markers = []
     
     def init_ui(self):
         """UI 컴포넌트 초기화"""
@@ -152,6 +150,7 @@ class MainWindow(QMainWindow, ChartMixin, IndicatorsMixin):
         # 메인 레이아웃
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(1)  # 레이아웃 내 위젯 간 간격 최소화
         
         # 컨트롤 레이아웃
         controls_layout = QHBoxLayout()
@@ -208,23 +207,77 @@ class MainWindow(QMainWindow, ChartMixin, IndicatorsMixin):
         # 메인 레이아웃에 컨트롤 레이아웃 추가
         main_layout.addLayout(controls_layout)
         
-        # 차트와 콘솔을 나누는 메인 스플리터 생성
-        self.main_splitter = QSplitter(Qt.Orientation.Vertical)
+        # === 새로운 UI 레이아웃 구성 ===
         
-        # 콘솔 텍스트 영역
+        # 메인 세로 스플리터 (전체 UI를 감싸는 스플리터)
+        self.main_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.main_splitter.setHandleWidth(1)  # 스플리터 핸들 너비 최소화
+        
+        # 스플리터 스타일 설정 - 간격 최소화 및 구분선 스타일 설정
+        self.main_splitter.setStyleSheet("""
+            QSplitter::handle {
+                background-color: #444444;
+                height: 1px;
+            }
+        """)
+        
+        # 상단 영역 스플리터 (콘솔 위의 모든 내용)
+        self.top_area = QSplitter(Qt.Orientation.Horizontal)
+        self.top_area.setHandleWidth(1)  # 스플리터 핸들 너비 최소화
+        
+        # 차트 영역 (메인 차트와 CCI 차트를 포함하는 영역)
+        self.charts_area = QSplitter(Qt.Orientation.Vertical)
+        self.charts_area.setHandleWidth(1)  # 스플리터 핸들 너비 최소화
+        
+        # 메인 차트 위젯 (캔들차트)
+        self.main_chart_widget = pg.GraphicsLayoutWidget()
+        
+        # CCI 차트 위젯
+        self.cci_chart_widget = pg.GraphicsLayoutWidget()
+        
+        # 메시지/알림 영역 (우측)
+        self.message_area = QTextEdit()
+        self.message_area.setReadOnly(True)
+        self.message_area.setStyleSheet("""
+            QTextEdit {
+                background-color: #303030;
+                color: #FFFFFF;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 9pt;
+                border: 1px solid #505050;
+            }
+        """)
+        self.message_area.setText("나중에\n사용하도록\n미리\n비워놓음")
+        
+        # 차트 영역에 메인 차트와 CCI 차트 추가
+        self.charts_area.addWidget(self.main_chart_widget)
+        self.charts_area.addWidget(self.cci_chart_widget)
+        
+        # 차트 영역 비율 설정 (메인 차트 : CCI 차트 = 3:1)
+        self.charts_area.setSizes([750, 250])
+        
+        # 상단 영역에 차트 영역과 메시지 영역 추가
+        self.top_area.addWidget(self.charts_area)
+        self.top_area.addWidget(self.message_area)
+        
+        # 상단 영역 비율 설정 (차트 영역 : 메시지 영역 = 7:3)
+        self.top_area.setSizes([700, 300])
+        
+        # 콘솔 영역
         self.console_output = QTextEdit()
         self.console_output.setReadOnly(True)
-        # 최대 높이 제한 제거 (사용자가 조절할 수 있도록)
-        # self.console_output.setMaximumHeight(100)
+        self.console_output.setMinimumHeight(50)
         self.console_output.setStyleSheet(CONSOLE_STYLE)
-        self.console_output.setMinimumHeight(50)  # 최소 높이만 설정
         
-        # 차트와 콘솔을 스플리터에 추가
-        self.main_splitter.addWidget(self.chart_splitter)
+        # 메인 스플리터에 상단 영역과 콘솔 추가
+        self.main_splitter.addWidget(self.top_area)
         self.main_splitter.addWidget(self.console_output)
         
-        # 스플리터 비율 설정 (차트:콘솔 = 9:1)
-        self.main_splitter.setSizes([900, 100])
+        # 메인 스플리터 비율 설정 (상단 영역:콘솔 = 8:2)
+        self.main_splitter.setSizes([800, 200])
+        
+        # CCI 위젯은 CCI 버튼 상태에 따라 표시/숨김
+        self.cci_chart_widget.setVisible(self.show_cci)
         
         # 메인 레이아웃에 메인 스플리터 추가
         main_layout.addWidget(self.main_splitter, stretch=1)
@@ -317,6 +370,11 @@ class MainWindow(QMainWindow, ChartMixin, IndicatorsMixin):
                 
                 # 차트 업데이트
                 self.plot_data(auto_range=True)
+                
+                # 차트 로드 직후 자동으로 최근 150개 캔들로 확대
+                if len(df) > 150:
+                    self.zoom_to_recent_candles(150)
+                    print("자동으로 최근 150개 캔들로 확대했습니다.")
             else:
                 print(f"REST API에서 {self.symbol} {self.timeframe} 데이터를 가져올 수 없습니다.")
         except Exception as e:
@@ -457,6 +515,10 @@ class MainWindow(QMainWindow, ChartMixin, IndicatorsMixin):
         
         # WebSocket 또는 REST API 타이머 다시 시작
         self.init_data_connection()
+        
+        # CCI 스케일 재설정 플래그 (새 심볼/타임프레임에 대한 자동 스케일을 위해)
+        if hasattr(self, '_cci_scaled'):
+            self._cci_scaled[f"{self.symbol}_{self.timeframe}"] = False
     
     @pyqtSlot(str)
     def append_log(self, text):

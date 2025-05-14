@@ -68,9 +68,6 @@ class IndicatorsMixin:
         self.cci_chart_widget.setVisible(self.show_cci)
         
         if self.show_cci:
-            # 스플리터 사이즈 재조정 (메인:CCI = 3:1 비율)
-            self.update_chart_splitter_sizes()
-            
             self.cci_button.setStyleSheet(CCI_BUTTON_ACTIVE_STYLE)
             print("CCI 지표를 표시합니다.")
             self.append_log("CCI 지표를 표시합니다.")
@@ -89,8 +86,8 @@ class IndicatorsMixin:
         # 범위가 저장되어 있으면 원래 범위로 복원
         if current_range:
             self.chart_widget.setRange(rect=QRectF(current_range[0][0], current_range[1][0], 
-                                           current_range[0][1] - current_range[0][0], 
-                                           current_range[1][1] - current_range[1][0]))
+                                       current_range[0][1] - current_range[0][0], 
+                                       current_range[1][1] - current_range[1][0]))
     
     def clear_cci_elements(self):
         """CCI 관련 요소 제거"""
@@ -112,16 +109,6 @@ class IndicatorsMixin:
             self.cci_info_label.setText("")
         # CCI 데이터 초기화
         self.cci_data = []
-        
-        # 매매신호 마커 제거
-        if hasattr(self, 'cci_buy_markers') and self.cci_buy_markers:
-            for marker in self.cci_buy_markers:
-                self.plot_item.removeItem(marker)
-            self.cci_buy_markers = []
-        if hasattr(self, 'cci_sell_markers') and self.cci_sell_markers:
-            for marker in self.cci_sell_markers:
-                self.plot_item.removeItem(marker)
-            self.cci_sell_markers = []
     
     def plot_indicators(self, df):
         """기술적 지표 계산 및 표시"""
@@ -193,18 +180,6 @@ class IndicatorsMixin:
             self.cci_plot_item.removeItem(self.cci_current_line)
             self.cci_current_line = None
         
-        # 기존 매매신호 마커 제거
-        if hasattr(self, 'cci_buy_markers') and self.cci_buy_markers:
-            for marker in self.cci_buy_markers:
-                self.plot_item.removeItem(marker)
-        if hasattr(self, 'cci_sell_markers') and self.cci_sell_markers:
-            for marker in self.cci_sell_markers:
-                self.plot_item.removeItem(marker)
-        
-        # 매매신호 마커 리스트 초기화
-        self.cci_buy_markers = []
-        self.cci_sell_markers = []
-        
         # CCI 계산
         cci_values = calculate_cci(df, window=self.cci_window)
         
@@ -242,44 +217,17 @@ class IndicatorsMixin:
             self.cci_plot_item.addItem(plus_100_line)
             self.cci_plot_item.addItem(minus_100_line)
             
-            # 매매신호 감지 및 표시
-            self.plot_cci_signals(df, cci_values)
+            # 현재 CCI 값 표시
+            self.display_current_cci(df, cci_values)
             
             # CCI 스케일 자동 조정 - 처음 표시될 때만 또는 새 심볼/타임프레임 로드 시에만 적용
             self.update_cci_scale()
             
             print(f"CCI 지표 계산됨 (주기: {self.cci_window})")
     
-    def plot_cci_signals(self, df, cci_values):
-        """CCI 매매신호 감지 및 표시"""
-        df_with_signals = detect_cci_signals(df, cci_values)
-        
-        # 매수/매도 신호를 차트에 표시
-        for idx, row in df_with_signals.iterrows():
-            if row['cci_buy_signal']:
-                # 매수 신호 (초록색 삼각형)
-                buy_marker = pg.ScatterPlotItem(
-                    [row['time_axis_val']], [row['low'] * 0.999],  # 가격 약간 아래에 표시
-                    symbol='t', size=10, pen=pg.mkPen(None), brush=pg.mkBrush('g')
-                )
-                self.plot_item.addItem(buy_marker)
-                self.cci_buy_markers.append(buy_marker)
-                
-            if row['cci_sell_signal']:
-                # 매도 신호 (빨간색 역삼각형)
-                sell_marker = pg.ScatterPlotItem(
-                    [row['time_axis_val']], [row['high'] * 1.001],  # 가격 약간 위에 표시
-                    symbol='t1', size=10, pen=pg.mkPen(None), brush=pg.mkBrush('r')
-                )
-                self.plot_item.addItem(sell_marker)
-                self.cci_sell_markers.append(sell_marker)
-        
-        # 현재 CCI 값 표시
-        self.display_current_cci_value(cci_values, df_with_signals)
-    
-    def display_current_cci_value(self, cci_values, df_with_signals):
-        """현재 CCI 값 표시"""
-        # 최신 데이터가 있는 경우 현재 CCI 값을 가져옴
+    def display_current_cci(self, df, cci_values):
+        """현재 CCI 값을 차트에 표시"""
+        # 현재 CCI 값이 있는 경우에만 표시
         if len(cci_values) > 0:
             latest_cci = cci_values.values[-1]
             
@@ -304,13 +252,6 @@ class IndicatorsMixin:
             self.cci_current_line.setPos(latest_cci)
             self.cci_current_line.setVisible(True)
             self.cci_plot_item.addItem(self.cci_current_line)
-            
-            # 최근 매매신호 확인
-            latest_idx = df_with_signals.index[-1]
-            if df_with_signals.loc[latest_idx, 'cci_buy_signal']:
-                self.append_log("🔼 CCI 매수 신호 발생!")
-            if df_with_signals.loc[latest_idx, 'cci_sell_signal']:
-                self.append_log("🔽 CCI 매도 신호 발생!")
             
             # 라벨의 Z값 설정 (다른 아이템보다 위에 표시)
             if hasattr(self.cci_current_line, 'label') and isinstance(self.cci_current_line.label, pg.TextItem):
