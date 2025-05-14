@@ -1,5 +1,5 @@
 import pandas as pd
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel, QTextEdit, QLineEdit, QComboBox, QPushButton, QHBoxLayout
+from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QLabel, QTextEdit, QLineEdit, QComboBox, QPushButton, QHBoxLayout, QSplitter
 from PyQt6.QtCore import QTimer, QDateTime, Qt, QRectF, QPointF, pyqtSignal, QObject, pyqtSlot, QThread
 from PyQt6.QtGui import QPainter, QBrush, QPen, QColor
 from datetime import datetime
@@ -58,6 +58,12 @@ class MainWindow(QMainWindow):
         self.crosshair_h = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen('gray', width=1, style=Qt.PenStyle.DashLine))
         self.crosshair_v.setVisible(False)
         self.crosshair_h.setVisible(False)
+        
+        # Crosshair lines for CCI chart
+        self.cci_crosshair_v = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('gray', width=1, style=Qt.PenStyle.DashLine))
+        self.cci_crosshair_h = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen('gray', width=1, style=Qt.PenStyle.DashLine))
+        self.cci_crosshair_v.setVisible(False)
+        self.cci_crosshair_h.setVisible(False)
 
         # Current Price Line and Label
         self.current_price_line = pg.InfiniteLine(
@@ -66,7 +72,7 @@ class MainWindow(QMainWindow):
             pen=pg.mkPen(QColor(0, 120, 255, 200), width=1, style=Qt.PenStyle.DashLine),
             label='{value:.4f}',
             labelOpts={
-                'position': 0.97, 
+                'position': 0.96, 
                 'color': (255, 255, 255),
                 'fill': (0, 120, 255, 150),
                 'anchor': (1, 0.5),
@@ -81,6 +87,26 @@ class MainWindow(QMainWindow):
         # Candle info label for hover
         self.candle_info_label = pg.LabelItem(justify='left', color='white', anchor=(0,1)) # Anchor label's top-left
         self.candle_info_label.setVisible(False)
+        
+        # CCI 정보 라벨 추가
+        self.cci_info_label = pg.LabelItem(justify='left', color='white', anchor=(0,1))
+        self.cci_info_label.setVisible(False)
+        
+        # 기술적 지표 관련 속성 초기화
+        self.show_bollinger = False  # 볼린저 밴드 표시 여부
+        self.show_cci = False        # CCI 지표 표시 여부
+        self.bollinger_window = 20   # 볼린저 밴드 계산 기간
+        self.bollinger_std = 2       # 볼린저 밴드 표준편차 승수
+        self.cci_window = 20         # CCI 계산 기간
+        
+        # 지표를 그릴 때 사용할 플롯 아이템
+        self.bollinger_upper_curve = None
+        self.bollinger_middle_curve = None
+        self.bollinger_lower_curve = None
+        self.cci_plot_item = None    # CCI를 그릴 별도의 플롯 아이템
+        self.cci_curve = None        # CCI 곡선
+        self.cci_current_line = None # CCI 현재값 표시선
+        self.cci_data = []           # CCI 데이터 저장용
 
         self.init_ui()
         self.setWindowTitle(f"{self.symbol} - {self.timeframe} Chart") # Set initial title based on defaults
@@ -134,6 +160,17 @@ class MainWindow(QMainWindow):
         self.auto_scale_button.setChecked(False)   # Off by default
         self.auto_scale_button.clicked.connect(self.toggle_auto_scale)
         self.auto_scale_button.setMinimumWidth(100)
+        
+        # 지표 버튼 추가
+        self.bollinger_button = QPushButton("볼린저밴드")
+        self.bollinger_button.setCheckable(True)   # 토글 가능하게 설정
+        self.bollinger_button.setChecked(False)    # 기본적으로 꺼진 상태
+        self.bollinger_button.clicked.connect(self.toggle_bollinger)
+        
+        self.cci_button = QPushButton("CCI")
+        self.cci_button.setCheckable(True)         # 토글 가능하게 설정
+        self.cci_button.setChecked(False)          # 기본적으로 꺼진 상태
+        self.cci_button.clicked.connect(self.toggle_cci)
 
         controls_layout.addWidget(QLabel("Symbol:"))
         controls_layout.addWidget(self.symbol_combo)
@@ -142,18 +179,43 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.load_chart_button)
         controls_layout.addWidget(self.reset_view_button)
         controls_layout.addWidget(self.auto_scale_button)
+        controls_layout.addWidget(self.bollinger_button)
+        controls_layout.addWidget(self.cci_button)
         controls_layout.addStretch(1)
         
         # Add controls layout to the main layout
         main_layout.addLayout(controls_layout)
 
+        # 메인 차트와 CCI 차트를 담을 스플리터 생성
+        self.chart_splitter = QSplitter(Qt.Orientation.Vertical)
+        
+        # 메인 차트와 CCI 차트를 위한 개별 위젯 생성
+        self.main_chart_widget = pg.GraphicsLayoutWidget()
+        self.cci_chart_widget = pg.GraphicsLayoutWidget()
+        
+        # 스플리터에 차트 위젯 추가
+        self.chart_splitter.addWidget(self.main_chart_widget)
+        self.chart_splitter.addWidget(self.cci_chart_widget)
+        
+        # 스플리터 사이즈 비율 설정 (메인 차트 : CCI 차트 = 3 : 1)
+        self.chart_splitter.setSizes([300, 100])
+        
+        # CCI 차트는 기본적으로 숨김
+        self.cci_chart_widget.setVisible(False)
+        
+        # 메인 캔들차트와 볼린저밴드를 표시할 윗 영역
         self.date_axis = DateAxisItem(orientation='bottom')
-        self.chart_widget = pg.PlotWidget(axisItems={'bottom': self.date_axis})
-        self.plot_item = self.chart_widget.getPlotItem()
+        self.chart_widget = self.main_chart_widget.addPlot(row=0, col=0, axisItems={'bottom': self.date_axis})
+        self.plot_item = self.chart_widget
         
-        # 로그 스케일 모드 비활성화 - 항상 선형 스케일 사용
-        self.plot_item.getViewBox().setLogMode(False, False)
+        # CCI 지표를 위한 아래 위젯
+        self.cci_date_axis = DateAxisItem(orientation='bottom')
+        self.cci_plot_item = self.cci_chart_widget.addPlot(row=0, col=0, axisItems={'bottom': self.cci_date_axis})
         
+        # 차트 간 X축 동기화
+        self.cci_plot_item.setXLink(self.chart_widget)  # CCI가 메인 차트와 X축을 공유
+        
+        # 메인 차트 설정
         self.plot_item.showGrid(x=True, y=True, alpha=0.3)
 
         # Configure axes
@@ -163,11 +225,33 @@ class MainWindow(QMainWindow):
         right_axis.setLabel(text='Price', units='USDT')
         right_axis.enableAutoSIPrefix(False) # Disable SI prefix for price axis
         
+        # CCI 차트 설정
+        self.cci_plot_item.showGrid(x=True, y=True, alpha=0.3)
+        self.cci_plot_item.hideAxis('left')
+        self.cci_plot_item.showAxis('right')
+        cci_right_axis = self.cci_plot_item.getAxis('right')
+        cci_right_axis.setLabel(text='CCI')
+        
+        # CCI X축 라벨 숨기기 (메인 차트와 공유하므로 중복 표시 방지)
+        self.cci_plot_item.getAxis('bottom').setStyle(showValues=False)
+        
+        # CCI 정보 라벨 설정
+        cci_view_box = self.cci_plot_item.getViewBox()
+        self.cci_info_label.setParentItem(cci_view_box)
+        self.cci_info_label.anchor(itemPos=(0,1), parentPos=(0,1), offset=(5, 5))
+        
+        # 로그 스케일 모드 비활성화 - 항상 선형 스케일 사용
+        self.plot_item.getViewBox().setLogMode(False, False)
+        
         self.candlestick_item = None
         
         self.plot_item.addItem(self.crosshair_v, ignoreBounds=True)
         self.plot_item.addItem(self.crosshair_h, ignoreBounds=True)
         self.plot_item.addItem(self.current_price_line, ignoreBounds=True)
+        
+        # CCI 차트에 크로스헤어 추가
+        self.cci_plot_item.addItem(self.cci_crosshair_v, ignoreBounds=True)
+        self.cci_plot_item.addItem(self.cci_crosshair_h, ignoreBounds=True)
 
         # Setup auto-scale functionality
         self.auto_scale_active = False
@@ -203,16 +287,16 @@ class MainWindow(QMainWindow):
             }
         """)
 
-        main_layout.addWidget(self.chart_widget) # Chart takes up remaining space
+        main_layout.addWidget(self.chart_splitter) # 차트 레이아웃이 남은 공간을 차지
         main_layout.addWidget(self.console_output) # Console at the bottom
 
         container = QWidget() 
         container.setLayout(main_layout)
         self.setCentralWidget(container)
 
-        # Connect mouse signals
-        self.chart_widget.scene().sigMouseMoved.connect(self.mouse_moved_on_chart) # Use scene for broader mouse tracking
-        # self.chart_widget.getViewBox().sigMouseLeave.connect(self.mouse_left_chart) # Removed due to AttributeError
+        # Connect mouse signals - 메인 차트와 CCI 차트 모두 연결
+        self.main_chart_widget.scene().sigMouseMoved.connect(self.mouse_moved_on_chart)
+        self.cci_chart_widget.scene().sigMouseMoved.connect(self.mouse_moved_on_chart)
 
     def redirect_std_streams(self):
         # Redirect stdout
@@ -394,6 +478,21 @@ class MainWindow(QMainWindow):
             # Potentially hide info label as well if it was visible
             if self.candle_info_label: self.candle_info_label.setVisible(False) 
             if self.current_price_line: self.current_price_line.setVisible(False) # Hide current price line
+            if self.cci_info_label: self.cci_info_label.setVisible(False) # Hide CCI info label
+            
+            # 지표 그래프 초기화
+            if self.bollinger_upper_curve:
+                self.plot_item.removeItem(self.bollinger_upper_curve)
+                self.bollinger_upper_curve = None
+            if self.bollinger_middle_curve:
+                self.plot_item.removeItem(self.bollinger_middle_curve)
+                self.bollinger_middle_curve = None
+            if self.bollinger_lower_curve:
+                self.plot_item.removeItem(self.bollinger_lower_curve)
+                self.bollinger_lower_curve = None
+            if self.cci_curve:
+                self.cci_plot_item.removeItem(self.cci_curve)
+                self.cci_curve = None
             
             # Only auto range if specifically requested, even if empty
             if auto_range:
@@ -458,12 +557,20 @@ class MainWindow(QMainWindow):
         else:
             if self.current_price_line: self.current_price_line.setVisible(False)
         
+        # 기술적 지표 계산 및 표시
+        self.plot_indicators(plot_df_copy)
+        
         # Only auto-range when explicitly requested (new symbol or reset view)
-        if auto_range:
+        # 그리고 오토스케일 기능이 켜져 있지 않은 경우에만 적용
+        if auto_range and not self.auto_scale_active:
             self.chart_widget.autoRange()
+            # CCI는 항상 자체적으로 크기 조정
+            if self.show_cci and hasattr(self, '_cci_scaled') and not self._cci_scaled.get(f"{self.symbol}_{self.timeframe}", False):
+                self.cci_plot_item.autoRange()
+                if not hasattr(self, '_cci_scaled'):
+                    self._cci_scaled = {}
+                self._cci_scaled[f"{self.symbol}_{self.timeframe}"] = True
             print(f"Chart updated and auto-ranged to fit {self.symbol} price range.")
-        # else:
-        #     print(f"Chart updated, preserving current view.")
 
     def handle_worker_error(self, error_message):
         print(f"WebSocket Worker Error for {self.symbol} ({self.timeframe}): {error_message}")
@@ -554,6 +661,10 @@ class MainWindow(QMainWindow):
         self.symbol = new_symbol
         self.timeframe = new_timeframe
         self.setWindowTitle(f"{self.symbol} - {self.timeframe} Chart")
+        
+        # 새로운 심볼/타임프레임에 대한 CCI 스케일 초기화
+        if hasattr(self, '_cci_scaled'):
+            self._cci_scaled[f"{self.symbol}_{self.timeframe}"] = False
 
         # If timeframe changed, recreate date_axis for better tick spacing
         if timeframe_changed:
@@ -572,6 +683,20 @@ class MainWindow(QMainWindow):
         # Clear old data and chart items
         self.data_df = pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         self.detailed_candle_data = []
+        
+        # 기술적 지표 관련 아이템 초기화
+        if self.bollinger_upper_curve:
+            self.plot_item.removeItem(self.bollinger_upper_curve)
+            self.bollinger_upper_curve = None
+        if self.bollinger_middle_curve:
+            self.plot_item.removeItem(self.bollinger_middle_curve)
+            self.bollinger_middle_curve = None
+        if self.bollinger_lower_curve:
+            self.plot_item.removeItem(self.bollinger_lower_curve)
+            self.bollinger_lower_curve = None
+        if self.cci_curve:
+            self.cci_plot_item.removeItem(self.cci_curve)
+            self.cci_curve = None
         
         # Only remove the candlestick_item if we're changing symbols or it doesn't exist
         if self.candlestick_item and new_symbol != self.symbol:
@@ -642,49 +767,73 @@ class MainWindow(QMainWindow):
 
     def mouse_moved_on_chart(self, pos): # pos is from scene().sigMouseMoved
         # Check if mouse is within the plot area (scene coordinates)
-        plot_item_rect = self.chart_widget.plotItem.sceneBoundingRect()
+        plot_item_rect = self.chart_widget.sceneBoundingRect()
+        cci_plot_item_rect = self.cci_plot_item.sceneBoundingRect() if self.show_cci else None
         
-        if not plot_item_rect.contains(pos):
-            if self.crosshair_v.isVisible(): # Hide only if they were visible
+        is_in_main_chart = plot_item_rect.contains(pos)
+        is_in_cci_chart = cci_plot_item_rect and cci_plot_item_rect.contains(pos) and self.show_cci
+        
+        if not (is_in_main_chart or is_in_cci_chart):
+            # 둘 다 아닌 영역에 마우스가 있으면 모든 크로스헤어 숨김
+            if self.crosshair_v.isVisible():
                 self.crosshair_v.setVisible(False)
                 self.crosshair_h.setVisible(False)
                 self.candle_info_label.setVisible(False)
-                self.candle_info_label.setText("") # Clear text when hiding
+                self.candle_info_label.setText("")
+            if self.show_cci and self.cci_crosshair_v.isVisible():
+                self.cci_crosshair_v.setVisible(False)
+                self.cci_crosshair_h.setVisible(False)
+                self.cci_info_label.setVisible(False)
+                self.cci_info_label.setText("")
             return
 
-        # If inside, ensure crosshairs are visible and update position
-        mouse_point = self.chart_widget.plotItem.vb.mapSceneToView(pos)
-        self.crosshair_v.setPos(mouse_point.x())
-        self.crosshair_h.setPos(mouse_point.y())
-        if not self.crosshair_v.isVisible():
-            self.crosshair_v.setVisible(True)
-            self.crosshair_h.setVisible(True)
+        # 마우스가 메인 차트에 있는 경우
+        if is_in_main_chart:
+            mouse_point = self.chart_widget.vb.mapSceneToView(pos)
+            self.crosshair_v.setPos(mouse_point.x())
+            self.crosshair_h.setPos(mouse_point.y())
+            
+            if not self.crosshair_v.isVisible():
+                self.crosshair_v.setVisible(True)
+                self.crosshair_h.setVisible(True)
+            
+            # CCI 차트도 표시 중이면 X 위치 동기화
+            if self.show_cci:
+                self.cci_crosshair_v.setPos(mouse_point.x())
+                if not self.cci_crosshair_v.isVisible():
+                    self.cci_crosshair_v.setVisible(True)
+        
+        # 마우스가 CCI 차트에 있는 경우
+        elif is_in_cci_chart:
+            mouse_point = self.cci_plot_item.vb.mapSceneToView(pos)
+            self.cci_crosshair_v.setPos(mouse_point.x())
+            self.cci_crosshair_h.setPos(mouse_point.y())
+            
+            if not self.cci_crosshair_v.isVisible():
+                self.cci_crosshair_v.setVisible(True)
+                self.cci_crosshair_h.setVisible(True)
+            
+            # 메인 차트 X 위치도 동기화
+            self.crosshair_v.setPos(mouse_point.x())
+            if not self.crosshair_v.isVisible():
+                self.crosshair_v.setVisible(True)
+                self.crosshair_h.setVisible(False)  # Y 위치는 동기화하지 않음
 
+        # 공통 X 위치 기준으로 캔들 찾기
+        current_x = self.crosshair_v.value()
         found_candle = None
         if self.candlestick_item and self.candlestick_item.data and self.detailed_candle_data:
-            # bar_visual_width is based on CandlestickItem's drawing logic (70% of timeframe)
-            # This might need adjustment if CandlestickItem changes its bar_width_seconds logic
-            # For 1h timeframe (3600s), bar_width_seconds is 3600 * 0.7 = 2520s
             candle_visual_width_on_plot = self.candlestick_item.bar_width_seconds 
-            
-            # Find the closest candle based on the vertical crosshair's x position
-            # The self.detailed_candle_data contains 'time_axis_val' which is the center for CandlestickItem
             min_dist = float('inf')
             
             for candle_data in self.detailed_candle_data:
-                # 'time_axis_val' is the center x-coordinate of the candle visual
-                # Check if mouse_point.x() is within the visual span of the candle
-                # The CandlestickItem draws centered on 'time', with width 'bar_width_seconds'
-                if abs(candle_data['time_axis_val'] - mouse_point.x()) < candle_visual_width_on_plot / 2.0:
-                    dist = abs(candle_data['time_axis_val'] - mouse_point.x())
+                if abs(candle_data['time_axis_val'] - current_x) < candle_visual_width_on_plot / 2.0:
+                    dist = abs(candle_data['time_axis_val'] - current_x)
                     if dist < min_dist:
                         min_dist = dist
                         found_candle = candle_data
-                    # Optimization: if exact match or very close, could break early if data is sorted by time
-                    # For now, iterate all to find the one whose center is closest IF multiple overlap visually by x-coord due to zoom
-                    # If using a simple check where mouse_x must be within candle body, this logic simplifies. 
-                    # Current logic: find candle whose *center* is closest to mouse_x and mouse_x is within its body.
 
+        # 메인 차트의 캔들 정보 표시
         if found_candle:
             info_text = f"Time: {found_candle['timestamp_display']}\n"
             info_text += f"O: {found_candle['open']:.4f}  H: {found_candle['high']:.4f}\n"
@@ -693,10 +842,36 @@ class MainWindow(QMainWindow):
             self.candle_info_label.setText(info_text)
             if not self.candle_info_label.isVisible():
                 self.candle_info_label.setVisible(True)
+                
+            # 같은 캔들의 CCI 값 찾기 (CCI 차트가 표시된 경우)
+            if self.show_cci and self.cci_curve and found_candle:
+                # CCI 값이 있는지 확인
+                if hasattr(self, 'cci_data') and len(self.cci_data) > 0:
+                    # 현재 캔들에 해당하는 CCI 값 찾기
+                    timestamp = found_candle['time_axis_val']
+                    cci_value = None
+                    
+                    # 정확히 같은 timestamp가 있는지 확인
+                    for idx, (ts, val) in enumerate(self.cci_data):
+                        if abs(ts - timestamp) < 0.001:  # 작은 오차 허용
+                            cci_value = val
+                            break
+                    
+                    if cci_value is not None:
+                        cci_info_text = f"Time: {found_candle['timestamp_display']}\n"
+                        cci_info_text += f"CCI: {cci_value:.2f}"
+                        self.cci_info_label.setText(cci_info_text)
+                        self.cci_info_label.setVisible(True)
+                    else:
+                        self.cci_info_label.setVisible(False)
+                        self.cci_info_label.setText("")
         else:
             if self.candle_info_label.isVisible():
                 self.candle_info_label.setVisible(False)
                 self.candle_info_label.setText("")
+            if self.cci_info_label.isVisible():
+                self.cci_info_label.setVisible(False)
+                self.cci_info_label.setText("")
 
     def mouse_left_chart(self): # This method might become redundant or be called by mouse_moved_on_chart
         # This logic is now handled at the beginning of mouse_moved_on_chart
@@ -707,6 +882,11 @@ class MainWindow(QMainWindow):
             self.crosshair_h.setVisible(False)
             self.candle_info_label.setVisible(False)
             self.candle_info_label.setText("")
+        if self.cci_crosshair_v and self.cci_crosshair_v.isVisible():
+            self.cci_crosshair_v.setVisible(False)
+            self.cci_crosshair_h.setVisible(False)
+            self.cci_info_label.setVisible(False)
+            self.cci_info_label.setText("")
 
     def reset_chart_view(self):
         """Reset the chart view to automatically fit all data"""
@@ -714,6 +894,8 @@ class MainWindow(QMainWindow):
         self.plot_item.getViewBox().setLogMode(False, False)
         
         self.chart_widget.autoRange()
+        if self.show_cci:
+            self.cci_plot_item.autoRange()
         print(f"차트 뷰가 초기화되었습니다.")
         self.append_log("차트 뷰가 초기화되었습니다.")
 
@@ -791,287 +973,246 @@ class MainWindow(QMainWindow):
             
         print(f"오토스케일 적용: 보이는 캔들 {len(visible_candles)}개에 맞게 Y축을 조정했습니다.")
 
-    def init_exchanges(self):
-        try:
-            rest_exchange_class = getattr(ccxt, self.rest_exchange_id)
-            self.rest_exchange = rest_exchange_class({
-                'options': { 'defaultType': 'future', },
-            })
-            self.rest_exchange.load_markets()
-            print(f"ccxt: Successfully initialized '{self.rest_exchange_id}' for REST API.")
-        except AttributeError:
-            print(f"ERROR: ccxt: Exchange ID '{self.rest_exchange_id}' not found in ccxt.")
-            self.rest_exchange = None
-        except Exception as e:
-            print(f"ERROR: ccxt: Failed to initialize '{self.rest_exchange_id}' for REST API: {e}")
-            self.rest_exchange = None
-
-        try:
-            print(f"Attempting to initialize ccxtpro.binance with options for USDⓈ-M futures.")
-            self.exchange = ccxtpro.binance({
-                'options': {
-                    'defaultType': 'future', # For USDⓈ-M futures markets
-                },
-                # 'newUpdates': False, # Default is False, returns the whole list. True for only new updates.
-            })
-            # For ccxtpro, load_markets might be needed explicitly for some exchanges or methods
-            # It's an async function. If needed, it should be run in the worker's async loop.
-            # For watch_ohlcv, it often loads markets implicitly.
-            print(f"ccxtpro: Successfully initialized ccxtpro.binance with 'future' defaultType for WebSocket.")
-        except AttributeError as e_attr:
-            print(f"ERROR: ccxtpro: Attribute error during initialization (ccxtpro.binance): {e_attr}")
-            self.exchange = None
-        except Exception as e:
-            print(f"ERROR: ccxtpro: General exception during initialization: {e}")
-            traceback.print_exc()
-            self.exchange = None
-
-    def init_worker_thread(self):
-        if not self.exchange:
-            print("ERROR: Cannot init_worker_thread, ccxtpro exchange is not initialized.")
-            return
-
-        # Assuming Worker is imported from data_worker
-        self.worker = Worker(self.exchange, self.symbol, self.timeframe)
-        self.thread = QThread()
-        self.worker.moveToThread(self.thread)
-
-        self.worker.signals.new_data.connect(self.update_chart_from_websocket)
-        self.worker.signals.error.connect(self.handle_worker_error)
-        # Connect finished signal to quit the thread and clean up
-        self.worker.signals.finished.connect(self.thread.quit)
-        self.worker.signals.finished.connect(self.worker.deleteLater)
-        self.thread.finished.connect(self.thread.deleteLater)
+    def toggle_bollinger(self):
+        """볼린저 밴드 표시/숨김 토글"""
+        self.show_bollinger = self.bollinger_button.isChecked()
         
-        self.thread.started.connect(self.worker.start_streaming)
-        self.thread.start()
-        print("WebSocket worker thread started.")
+        if self.show_bollinger:
+            self.bollinger_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #4080C0;
+                    color: white;
+                    font-weight: bold;
+                }
+            """)
+            print("볼린저 밴드를 표시합니다.")
+            self.append_log("볼린저 밴드를 표시합니다.")
+            
+            # 전에 보여진 적이 있는 경우, 현재 차트 범위 유지
+            current_range = None
+            if self.chart_widget:
+                current_range = self.chart_widget.viewRange()
+        else:
+            self.bollinger_button.setStyleSheet("")
+            print("볼린저 밴드를 숨깁니다.")
+            self.append_log("볼린저 밴드를 숨깁니다.")
+            
+            # 볼린저 밴드 곡선 제거
+            if self.bollinger_upper_curve:
+                self.plot_item.removeItem(self.bollinger_upper_curve)
+                self.bollinger_upper_curve = None
+            if self.bollinger_middle_curve:
+                self.plot_item.removeItem(self.bollinger_middle_curve)
+                self.bollinger_middle_curve = None
+            if self.bollinger_lower_curve:
+                self.plot_item.removeItem(self.bollinger_lower_curve)
+                self.bollinger_lower_curve = None
         
+        # 데이터가 있으면 차트 다시 그리기
+        if not self.data_df.empty:
+            self.plot_data(auto_range=False)
+            
+        # 범위가 저장되어 있으면 원래 범위로 복원
+        if self.show_bollinger and current_range:
+            self.chart_widget.setRange(rect=QRectF(current_range[0][0], current_range[1][0], 
+                                               current_range[0][1] - current_range[0][0], 
+                                               current_range[1][1] - current_range[1][0]))
+    
+    def toggle_cci(self):
+        """CCI 지표 표시/숨김 토글"""
+        self.show_cci = self.cci_button.isChecked()
+        
+        # 현재 차트 범위 저장
+        current_range = None
+        if self.chart_widget:
+            current_range = self.chart_widget.viewRange()
+        
+        # CCI 차트 위젯 표시/숨김
+        self.cci_chart_widget.setVisible(self.show_cci)
+        
+        if self.show_cci:
+            # 스플리터 사이즈 재조정 (메인:CCI = 3:1 비율)
+            total_height = sum(self.chart_splitter.sizes())
+            main_height = int(total_height * 0.75)
+            cci_height = total_height - main_height
+            self.chart_splitter.setSizes([main_height, cci_height])
+            
+            self.cci_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #40A040;
+                    color: white;
+                    font-weight: bold;
+                }
+            """)
+            print("CCI 지표를 표시합니다.")
+            self.append_log("CCI 지표를 표시합니다.")
+        else:
+            self.cci_button.setStyleSheet("")
+            print("CCI 지표를 숨깁니다.")
+            self.append_log("CCI 지표를 숨깁니다.")
+            
+            # CCI 곡선 제거
+            if self.cci_curve:
+                self.cci_plot_item.removeItem(self.cci_curve)
+                self.cci_curve = None
+            # CCI 현재값 라인 제거
+            if self.cci_current_line:
+                self.cci_plot_item.removeItem(self.cci_current_line)
+                self.cci_current_line = None
+            # CCI 크로스헤어 숨기기
+            if self.cci_crosshair_v and self.cci_crosshair_v.isVisible():
+                self.cci_crosshair_v.setVisible(False)
+                self.cci_crosshair_h.setVisible(False)
+            # CCI 정보 라벨 숨기기
+            if self.cci_info_label:
+                self.cci_info_label.setVisible(False)
+                self.cci_info_label.setText("")
+            # CCI 데이터 초기화
+            self.cci_data = []
+        
+        # 데이터가 있으면 차트 다시 그리기
+        if not self.data_df.empty:
+            self.plot_data(auto_range=False)
+            
+        # 범위가 저장되어 있으면 원래 범위로 복원
+        if current_range:
+            self.chart_widget.setRange(rect=QRectF(current_range[0][0], current_range[1][0], 
+                                           current_range[0][1] - current_range[0][0], 
+                                           current_range[1][1] - current_range[1][0]))
 
-    def initial_load_rest(self):
-        try:
-            print(f"Attempting to fetch initial OHLCV data for {self.symbol} ({self.timeframe}) from {self.rest_exchange_id} (REST)...")
-            if not self.rest_exchange:
-                print("ERROR: REST exchange not initialized for initial_load_rest.")
-                return
-
-            if not self.rest_exchange.markets:
-                 print(f"Loading markets for {self.rest_exchange_id}...")
-                 self.rest_exchange.load_markets()
-
-            ohlcv = self.rest_exchange.fetch_ohlcv(self.symbol, self.timeframe, limit=self.limit)
-            if ohlcv:
-                df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-                for col in ['open', 'high', 'low', 'close', 'volume']:
-                    df[col] = pd.to_numeric(df[col])
+    def plot_indicators(self, df):
+        """기술적 지표 계산 및 표시"""
+        from utils import calculate_bollinger_bands, calculate_cci
+        
+        # 볼린저 밴드 표시
+        if self.show_bollinger and len(df) >= self.bollinger_window:
+            # 기존 볼린저 밴드 제거
+            if self.bollinger_upper_curve:
+                self.plot_item.removeItem(self.bollinger_upper_curve)
+            if self.bollinger_middle_curve:
+                self.plot_item.removeItem(self.bollinger_middle_curve)
+            if self.bollinger_lower_curve:
+                self.plot_item.removeItem(self.bollinger_lower_curve)
                 
-                self.data_df = df.sort_values(by='timestamp').reset_index(drop=True)
-                self.plot_data(auto_range=True) # Auto-range on initial load
-                print(f"Initial chart PLOTTED with REST API data. {len(self.data_df)} candles.")
-            else:
-                print("No data received from REST API for initial load.")
-                self.data_df = pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']) # Ensure empty df
-                self.append_log(f"No initial data for {self.symbol} ({self.timeframe}) via REST.")
-                self.plot_data(auto_range=True) # Still auto-range even if empty
-        except Exception as e:
-            print(f"Error fetching initial OHLCV data from REST API for {self.symbol} ({self.timeframe}): {e}")
-            self.append_log(f"REST Error for {self.symbol}: {str(e)[:100]}...") # Log a snippet
-            traceback.print_exc()
-            self.data_df = pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            self.plot_data(auto_range=True) # Auto-range even on error
-
-    @pyqtSlot(list)
-    def update_chart_from_websocket(self, kline_data_list):
-        if not kline_data_list:
-            # print("WebSocket: Received empty kline_data_list.")
-            return
-
-        # print(f"WebSocket: Received klines: {len(kline_data_list)}")
-
-        new_data_df = pd.DataFrame(kline_data_list, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        new_data_df['timestamp'] = pd.to_datetime(new_data_df['timestamp'], unit='ms')
-        
-        # Ensure data types are correct for merging and plotting
-        for col in ['open', 'high', 'low', 'close', 'volume']:
-            new_data_df[col] = pd.to_numeric(new_data_df[col])
-
-        if self.data_df.empty:
-            self.data_df = new_data_df
-        else:
-            # Make sure self.data_df['timestamp'] is also datetime
-            if not pd.api.types.is_datetime64_any_dtype(self.data_df['timestamp']):
-                self.data_df['timestamp'] = pd.to_datetime(self.data_df['timestamp'], unit='ms')
-
-            self.data_df = pd.concat([self.data_df, new_data_df])
-            self.data_df.drop_duplicates(subset=['timestamp'], keep='last', inplace=True)
-        
-        self.data_df.sort_values('timestamp', inplace=True)
-        self.data_df = self.data_df.tail(self.limit + 50) # Keep a bit more than limit for smoother updates
-        self.data_df.reset_index(drop=True, inplace=True)
-        
-        self.plot_data(auto_range=False) # No auto-range on WebSocket updates
-        # print(f"Chart updated via WebSocket. Candles: {len(self.data_df)}. Last: {self.data_df['timestamp'].iloc[-1] if not self.data_df.empty else 'N/A'}")
-
-    def update_chart_rest(self):
-        try:
-            print(f"Updating chart with REST data for {self.symbol} ({self.timeframe})...")
-            if not self.rest_exchange:
-                print("ERROR: REST exchange not available for update_chart_rest.")
-                return
+            # 볼린저 밴드 계산
+            middle_band, upper_band, lower_band = calculate_bollinger_bands(
+                df, window=self.bollinger_window, num_std=self.bollinger_std
+            )
             
-            ohlcv_list = self.rest_exchange.fetch_ohlcv(self.symbol, self.timeframe, limit=10) 
-            
-            if not ohlcv_list:
-                print("No new data received from REST exchange for update.")
-                return
-
-            new_data_df = pd.DataFrame(ohlcv_list, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            new_data_df['timestamp'] = pd.to_datetime(new_data_df['timestamp'], unit='ms')
-            for col in ['open', 'high', 'low', 'close', 'volume']:
-                new_data_df[col] = pd.to_numeric(new_data_df[col])
-
-            if self.data_df.empty:
-                self.data_df = new_data_df.sort_values(by='timestamp').reset_index(drop=True)
-            else:
-                if not pd.api.types.is_datetime64_any_dtype(self.data_df['timestamp']):
-                    self.data_df['timestamp'] = pd.to_datetime(self.data_df['timestamp'], unit='ms', errors='coerce')
+            if middle_band is not None:
+                # X값으로 timestamp 사용
+                x_values = df['time_axis_val'].values
                 
-                self.data_df = pd.concat([self.data_df, new_data_df])
-                self.data_df.drop_duplicates(subset=['timestamp'], keep='last', inplace=True)
-                self.data_df.sort_values('timestamp', inplace=True)
+                # 중간 밴드 (SMA)
+                self.bollinger_middle_curve = pg.PlotDataItem(
+                    x_values, middle_band.values,
+                    pen=pg.mkPen(color='w', width=1),
+                    name="BB Middle"
+                )
+                self.plot_item.addItem(self.bollinger_middle_curve)
+                
+                # 상단 밴드
+                self.bollinger_upper_curve = pg.PlotDataItem(
+                    x_values, upper_band.values,
+                    pen=pg.mkPen(color='b', width=1, style=Qt.PenStyle.DashLine),
+                    name="BB Upper"
+                )
+                self.plot_item.addItem(self.bollinger_upper_curve)
+                
+                # 하단 밴드
+                self.bollinger_lower_curve = pg.PlotDataItem(
+                    x_values, lower_band.values,
+                    pen=pg.mkPen(color='b', width=1, style=Qt.PenStyle.DashLine),
+                    name="BB Lower"
+                )
+                self.plot_item.addItem(self.bollinger_lower_curve)
+                
+                print(f"볼린저 밴드 계산됨 (주기: {self.bollinger_window})")
+        
+        # CCI 지표 표시
+        if self.show_cci and len(df) >= self.cci_window:
+            # 기존 CCI 곡선 제거
+            if self.cci_curve:
+                self.cci_plot_item.removeItem(self.cci_curve)
+                self.cci_curve = None
+            # CCI 현재값 라인 제거
+            if self.cci_current_line:
+                self.cci_plot_item.removeItem(self.cci_current_line)
+                self.cci_current_line = None
             
-            self.data_df = self.data_df.tail(self.limit + 50) 
-            self.data_df.reset_index(drop=True, inplace=True)
-            self.plot_data(auto_range=False) # No auto-range on regular REST updates
-            print(f"Chart updated with REST data. Total candles: {len(self.data_df)}")
-        except Exception as e:
-            print(f"Error updating chart with REST data: {e}")
-            traceback.print_exc()
-
-    def plot_data(self, auto_range=False):
-        if self.data_df.empty:
-            print("No data to plot.")
-            if self.candlestick_item:
-                self.candlestick_item.setData([])
-            self.detailed_candle_data = [] # Clear detailed data too
-            # Potentially hide info label as well if it was visible
-            if self.candle_info_label: self.candle_info_label.setVisible(False) 
-            if self.current_price_line: self.current_price_line.setVisible(False) # Hide current price line
+            # CCI 계산
+            cci_values = calculate_cci(df, window=self.cci_window)
             
-            # Only auto range if specifically requested, even if empty
-            if auto_range:
-                self.chart_widget.autoRange()
-                print(f"Chart auto-ranged (empty chart).")
-            return
-
-        plot_df_copy = self.data_df.copy()
-        
-        # Ensure 'timestamp' is datetime (should be handled by data loading methods)
-        if not pd.api.types.is_datetime64_any_dtype(plot_df_copy['timestamp']):
-            # Attempt conversion if it's numeric (e.g., ms from WebSocket not yet converted)
-            if pd.api.types.is_numeric_dtype(plot_df_copy['timestamp']):
-                plot_df_copy['timestamp'] = pd.to_datetime(plot_df_copy['timestamp'], unit='ms', errors='coerce')
-            else:
-                print("Error: Timestamp column is not in a recognized datetime format.")
-                if self.current_price_line: self.current_price_line.setVisible(False)
-                return
-        plot_df_copy.dropna(subset=['timestamp'], inplace=True) # Drop rows where conversion failed
-        
-        # This 'time_axis_val' is what CandlestickItem uses as 'time' (center of candle visual)
-        plot_df_copy['time_axis_val'] = plot_df_copy['timestamp'].apply(lambda dt: dt.timestamp())
-        plot_df_copy['timestamp_display'] = plot_df_copy['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
-
-        for col in ['open', 'high', 'low', 'close', 'volume']:
-            plot_df_copy[col] = pd.to_numeric(plot_df_copy[col], errors='coerce')
-        plot_df_copy.dropna(subset=['open', 'high', 'low', 'close', 'volume', 'time_axis_val'], inplace=True) # Ensure no NaNs for critical data
-
-        self.detailed_candle_data = plot_df_copy[[
-            'time_axis_val', 'open', 'high', 'low', 'close', 'volume', 'timestamp_display'
-        ]].to_dict('records')
-
-        candlestick_item_input_data = [
-            {'time': d['time_axis_val'], 'open': d['open'], 'high': d['high'], 'low': d['low'], 'close': d['close']}
-            for d in self.detailed_candle_data
-        ]
-
-        if not self.candlestick_item:
-            if candlestick_item_input_data:
-                # Pass the current timeframe to CandlestickItem
-                self.candlestick_item = CandlestickItem(candlestick_item_input_data, timeframe=self.timeframe)
-                self.plot_item.addItem(self.candlestick_item)
-                print(f"CandlestickItem created and added to chart with timeframe {self.timeframe}.")
-                auto_range = True  # Force auto-range when creating chart for the first time
-            else:
-                print("No records to create CandlestickItem for the first time.")
-                return 
-        else:
-            # Check if timeframe needs to be updated
-            if hasattr(self.candlestick_item, 'timeframe') and self.candlestick_item.timeframe != self.timeframe:
-                self.candlestick_item.update_timeframe(self.timeframe)
-                print(f"Updated candlestick timeframe to {self.timeframe}")
-            self.candlestick_item.setData(candlestick_item_input_data)
-        
-        if not plot_df_copy.empty and 'close' in plot_df_copy.columns:
-            latest_close_price = plot_df_copy['close'].iloc[-1]
-            if pd.notna(latest_close_price):
-                self.current_price_line.setValue(latest_close_price)
-                self.current_price_line.setVisible(True)
-            else:
-                if self.current_price_line: self.current_price_line.setVisible(False)
-        else:
-            if self.current_price_line: self.current_price_line.setVisible(False)
-        
-        # Only auto-range when explicitly requested (new symbol or reset view)
-        if auto_range:
-            self.chart_widget.autoRange()
-            print(f"Chart updated and auto-ranged to fit {self.symbol} price range.")
-        # else:
-        #     print(f"Chart updated, preserving current view.")
-
-    def handle_worker_error(self, error_message):
-        print(f"WebSocket Worker Error for {self.symbol} ({self.timeframe}): {error_message}")
-        self.append_log(f"WS Error ({self.symbol}): {error_message}")
-        # Optionally, attempt to restart the worker or switch to REST polling
-        # For now, just print the error.
-        # If worker stops, we might want to explicitly stop the QThread if it's still running
-        # Consider if some errors should trigger fallback to REST polling.
-        # For example, if symbol is invalid for WebSocket on this exchange.
-        # self.stop_worker_thread() # Stop it to prevent repeated errors for a bad symbol/timeframe
-        # print("Switching to REST polling due to WebSocket error.")
-        # if self.rest_exchange and (not self.timer or not self.timer.isActive()):
-        #     self.timer = QTimer(self)
-        #     self.timer.timeout.connect(self.update_chart_rest)
-        #     self.timer.start(60000)
-        #     print("REST API polling timer started after WebSocket error.")
-
-    def closeEvent(self, event):
-        print("Closing application...")
-        
-        self.stop_worker_thread() # Use the helper method
-        
-        # if self.thread and self.thread.isRunning():
-        #     print("Stopping worker thread...")
-        #     if self.worker:
-        #         self.worker.stop() # Signal worker to stop its loop and close exchange
-        #     self.thread.quit()    # Ask the QThread to quit
-        #     if not self.thread.wait(5000): # Wait up to 5 seconds
-        #         print("Worker QThread did not quit in time. Terminating.")
-        #         self.thread.terminate() # Force terminate if necessary
-        #         self.thread.wait() # Wait again after termination
-        #     print("Worker thread stopped.")
-        if self.timer and self.timer.isActive(): # REST API timer
-             self.timer.stop()
-             print("REST API timer stopped.")
-        
-        # Explicitly close REST exchange if it was used and has a close method (rarely needed for ccxt sync)
-        if self.rest_exchange and hasattr(self.rest_exchange, 'close'):
-            try:
-                print("Closing REST exchange connection (if applicable).")
-                # For synchronous ccxt, close() is usually not needed unless it's managing persistent connections.
-                # self.rest_exchange.close() 
-            except Exception as e:
-                print(f"Error closing REST exchange: {e}")
-        
-        print("Exiting application.")
-        event.accept() 
+            if cci_values is not None:
+                # X값으로 timestamp 사용
+                x_values = df['time_axis_val'].values
+                
+                # CCI 데이터 저장 (mouse_moved_on_chart에서 사용하기 위함)
+                self.cci_data = list(zip(x_values, cci_values.values))
+                
+                # CCI 곡선
+                self.cci_curve = pg.PlotDataItem(
+                    x_values, cci_values.values,
+                    pen=pg.mkPen(color='y', width=1),
+                    name="CCI"
+                )
+                self.cci_plot_item.addItem(self.cci_curve)
+                
+                # 0선 추가
+                zero_line = pg.InfiniteLine(
+                    pos=0, angle=0,
+                    pen=pg.mkPen(color='w', width=1, style=Qt.PenStyle.DotLine)
+                )
+                self.cci_plot_item.addItem(zero_line)
+                
+                # +100, -100 선 추가 (CCI의 과매수/과매도 기준선)
+                plus_100_line = pg.InfiniteLine(
+                    pos=100, angle=0,
+                    pen=pg.mkPen(color='r', width=1, style=Qt.PenStyle.DotLine)
+                )
+                minus_100_line = pg.InfiniteLine(
+                    pos=-100, angle=0,
+                    pen=pg.mkPen(color='g', width=1, style=Qt.PenStyle.DotLine)
+                )
+                self.cci_plot_item.addItem(plus_100_line)
+                self.cci_plot_item.addItem(minus_100_line)
+                
+                # 현재 CCI 값 표시
+                # 최신 데이터가 있는 경우 현재 CCI 값을 가져옴
+                if len(cci_values) > 0:
+                    latest_cci = cci_values.values[-1]
+                    
+                    # 기존 CCI 현재값 라인 제거
+                    if self.cci_current_line:
+                        self.cci_plot_item.removeItem(self.cci_current_line)
+                    
+                    # 새 CCI 현재값 라인 생성
+                    self.cci_current_line = pg.InfiniteLine(
+                        angle=0, 
+                        movable=False, 
+                        pen=pg.mkPen(QColor(0, 120, 255, 200), width=1, style=Qt.PenStyle.DashLine),
+                        label=f'CCI: {latest_cci:.2f}',
+                        labelOpts={
+                            'position': 0.97, 
+                            'color': (255, 255, 255),
+                            'fill': (0, 120, 255, 150),
+                            'anchor': (1, 0.5),
+                            'movable': True 
+                        }
+                    )
+                    self.cci_current_line.setPos(latest_cci)
+                    self.cci_current_line.setVisible(True)
+                    self.cci_plot_item.addItem(self.cci_current_line)
+                    
+                    # 라벨의 Z값 설정 (다른 아이템보다 위에 표시)
+                    if hasattr(self.cci_current_line, 'label') and isinstance(self.cci_current_line.label, pg.TextItem):
+                        self.cci_current_line.label.setZValue(20)
+                
+                # CCI 스케일 자동 조정 - 처음 표시될 때만 또는 새 심볼/타임프레임 로드 시에만 적용
+                if not hasattr(self, '_cci_scaled') or not self._cci_scaled.get(f"{self.symbol}_{self.timeframe}", False):
+                    self.cci_plot_item.autoRange()
+                    if not hasattr(self, '_cci_scaled'):
+                        self._cci_scaled = {}
+                    self._cci_scaled[f"{self.symbol}_{self.timeframe}"] = True
+                
+                print(f"CCI 지표 계산됨 (주기: {self.cci_window})")
