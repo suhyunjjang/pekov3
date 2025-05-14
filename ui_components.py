@@ -93,10 +93,10 @@ class MainWindow(QMainWindow):
         self.cci_info_label.setVisible(False)
         
         # 기술적 지표 관련 속성 초기화
-        self.show_bollinger = False  # 볼린저 밴드 표시 여부
-        self.show_cci = False        # CCI 지표 표시 여부
+        self.show_bollinger = True  # 볼린저 밴드 표시 여부
+        self.show_cci = True        # CCI 지표 표시 여부
         self.bollinger_window = 20   # 볼린저 밴드 계산 기간
-        self.bollinger_std = 2       # 볼린저 밴드 표준편차 승수
+        self.bollinger_std = 2.0     # 볼린저 밴드 표준편차 계수
         self.cci_window = 20         # CCI 계산 기간
         
         # 지표를 그릴 때 사용할 플롯 아이템
@@ -107,6 +107,8 @@ class MainWindow(QMainWindow):
         self.cci_curve = None        # CCI 곡선
         self.cci_current_line = None # CCI 현재값 표시선
         self.cci_data = []           # CCI 데이터 저장용
+        self.cci_buy_markers = []    # CCI 매수 신호 마커
+        self.cci_sell_markers = []   # CCI 매도 신호 마커
 
         self.init_ui()
         self.setWindowTitle(f"{self.symbol} - {self.timeframe} Chart") # Set initial title based on defaults
@@ -130,6 +132,24 @@ class MainWindow(QMainWindow):
         else: 
             print("FATAL: Both ccxtpro and ccxt exchanges FAILED to initialize. No data can be fetched.")
             self.append_log("FATAL: Both ccxtpro and ccxt exchanges FAILED to initialize. No data can be fetched.")
+
+        # 볼린저 밴드 버튼 스타일 초기 설정 (활성화 상태로)
+        self.bollinger_button.setStyleSheet("""
+            QPushButton {
+                background-color: #4080C0;
+                color: white;
+                font-weight: bold;
+            }
+        """)
+        
+        # CCI 버튼 스타일 초기 설정 (활성화 상태로)
+        self.cci_button.setStyleSheet("""
+            QPushButton {
+                background-color: #40A040;
+                color: white;
+                font-weight: bold;
+            }
+        """)
 
     def init_ui(self):
         self.central_widget = QWidget()
@@ -164,12 +184,12 @@ class MainWindow(QMainWindow):
         # 지표 버튼 추가
         self.bollinger_button = QPushButton("볼린저밴드")
         self.bollinger_button.setCheckable(True)   # 토글 가능하게 설정
-        self.bollinger_button.setChecked(False)    # 기본적으로 꺼진 상태
+        self.bollinger_button.setChecked(True)     # 기본적으로 켜진 상태로 변경
         self.bollinger_button.clicked.connect(self.toggle_bollinger)
         
         self.cci_button = QPushButton("CCI")
         self.cci_button.setCheckable(True)         # 토글 가능하게 설정
-        self.cci_button.setChecked(False)          # 기본적으로 꺼진 상태
+        self.cci_button.setChecked(True)           # 기본적으로 켜진 상태로 변경
         self.cci_button.clicked.connect(self.toggle_cci)
 
         controls_layout.addWidget(QLabel("Symbol:"))
@@ -197,11 +217,15 @@ class MainWindow(QMainWindow):
         self.chart_splitter.addWidget(self.main_chart_widget)
         self.chart_splitter.addWidget(self.cci_chart_widget)
         
-        # 스플리터 사이즈 비율 설정 (메인 차트 : CCI 차트 = 3 : 1)
-        self.chart_splitter.setSizes([300, 100])
+        # 스플리터 사이즈 비율 설정 (메인 차트 : CCI 차트 = 3:1)
+        # 여기서 초기 크기를 설정합니다
+        total_height = 400  # 예상 총 높이 (실제 값은 나중에 조정됨)
+        main_height = int(total_height * 0.75)
+        cci_height = total_height - main_height
+        self.chart_splitter.setSizes([main_height, cci_height])
         
-        # CCI 차트는 기본적으로 숨김
-        self.cci_chart_widget.setVisible(False)
+        # CCI 차트는 기본적으로 표시
+        self.cci_chart_widget.setVisible(True)
         
         # 메인 캔들차트와 볼린저밴드를 표시할 윗 영역
         self.date_axis = DateAxisItem(orientation='bottom')
@@ -1069,6 +1093,16 @@ class MainWindow(QMainWindow):
                 self.cci_info_label.setText("")
             # CCI 데이터 초기화
             self.cci_data = []
+            
+            # 매매신호 마커 제거
+            if hasattr(self, 'cci_buy_markers') and self.cci_buy_markers:
+                for marker in self.cci_buy_markers:
+                    self.plot_item.removeItem(marker)
+                self.cci_buy_markers = []
+            if hasattr(self, 'cci_sell_markers') and self.cci_sell_markers:
+                for marker in self.cci_sell_markers:
+                    self.plot_item.removeItem(marker)
+                self.cci_sell_markers = []
         
         # 데이터가 있으면 차트 다시 그리기
         if not self.data_df.empty:
@@ -1082,7 +1116,7 @@ class MainWindow(QMainWindow):
 
     def plot_indicators(self, df):
         """기술적 지표 계산 및 표시"""
-        from utils import calculate_bollinger_bands, calculate_cci
+        from utils import calculate_bollinger_bands, calculate_cci, detect_cci_signals
         
         # 볼린저 밴드 표시
         if self.show_bollinger and len(df) >= self.bollinger_window:
@@ -1140,6 +1174,18 @@ class MainWindow(QMainWindow):
                 self.cci_plot_item.removeItem(self.cci_current_line)
                 self.cci_current_line = None
             
+            # 기존 매매신호 마커 제거
+            if hasattr(self, 'cci_buy_markers') and self.cci_buy_markers:
+                for marker in self.cci_buy_markers:
+                    self.plot_item.removeItem(marker)
+            if hasattr(self, 'cci_sell_markers') and self.cci_sell_markers:
+                for marker in self.cci_sell_markers:
+                    self.plot_item.removeItem(marker)
+            
+            # 매매신호 마커 리스트 초기화
+            self.cci_buy_markers = []
+            self.cci_sell_markers = []
+            
             # CCI 계산
             cci_values = calculate_cci(df, window=self.cci_window)
             
@@ -1177,6 +1223,29 @@ class MainWindow(QMainWindow):
                 self.cci_plot_item.addItem(plus_100_line)
                 self.cci_plot_item.addItem(minus_100_line)
                 
+                # 매매신호 감지 및 표시
+                df_with_signals = detect_cci_signals(df, cci_values)
+                
+                # 매수/매도 신호를 차트에 표시
+                for idx, row in df_with_signals.iterrows():
+                    if row['cci_buy_signal']:
+                        # 매수 신호 (초록색 삼각형)
+                        buy_marker = pg.ScatterPlotItem(
+                            [row['time_axis_val']], [row['low'] * 0.999],  # 가격 약간 아래에 표시
+                            symbol='t', size=10, pen=pg.mkPen(None), brush=pg.mkBrush('g')
+                        )
+                        self.plot_item.addItem(buy_marker)
+                        self.cci_buy_markers.append(buy_marker)
+                        
+                    if row['cci_sell_signal']:
+                        # 매도 신호 (빨간색 역삼각형)
+                        sell_marker = pg.ScatterPlotItem(
+                            [row['time_axis_val']], [row['high'] * 1.001],  # 가격 약간 위에 표시
+                            symbol='t1', size=10, pen=pg.mkPen(None), brush=pg.mkBrush('r')
+                        )
+                        self.plot_item.addItem(sell_marker)
+                        self.cci_sell_markers.append(sell_marker)
+                
                 # 현재 CCI 값 표시
                 # 최신 데이터가 있는 경우 현재 CCI 값을 가져옴
                 if len(cci_values) > 0:
@@ -1203,6 +1272,13 @@ class MainWindow(QMainWindow):
                     self.cci_current_line.setPos(latest_cci)
                     self.cci_current_line.setVisible(True)
                     self.cci_plot_item.addItem(self.cci_current_line)
+                    
+                    # 최근 매매신호 확인
+                    latest_idx = df_with_signals.index[-1]
+                    if df_with_signals.loc[latest_idx, 'cci_buy_signal']:
+                        self.append_log("🔼 CCI 매수 신호 발생!")
+                    if df_with_signals.loc[latest_idx, 'cci_sell_signal']:
+                        self.append_log("🔽 CCI 매도 신호 발생!")
                     
                     # 라벨의 Z값 설정 (다른 아이템보다 위에 표시)
                     if hasattr(self.cci_current_line, 'label') and isinstance(self.cci_current_line.label, pg.TextItem):

@@ -14,21 +14,30 @@
 *   타임스탬프를 포함한 애플리케이션 로그를 표시하는 내장 콘솔 창.
 *   차트 및 콘솔을 위한 어두운 테마.
 *   차트 오른쪽에 가격(Y축) 표시.
+*   사용자 친화적인 인터페이스 및 반응형 디자인
 
-## 의존성
+## 설치 방법
 
-*   Python 3.x
-*   PyQt6
-*   pyqtgraph
-*   ccxt
-*   pandas
-*   asyncio (Python 3.4 이상 버전에 기본 포함)
+### 필수 요구사항
+* Python 3.8 이상
+* pip (Python 패키지 관리자)
 
-다음 명령어를 사용하여 필요한 Python 라이브러리를 설치할 수 있습니다:
+### 의존성 설치
+
+이 프로젝트는 다음 라이브러리를 사용합니다:
+* PyQt6 - GUI 프레임워크
+* pyqtgraph - 데이터 시각화 라이브러리
+* ccxt - 암호화폐 거래소 API 통합 라이브러리
+* pandas - 데이터 분석 및 처리 라이브러리
+* asyncio - 비동기 프로그래밍 라이브러리 (Python 3.4 이상 버전에 기본 포함)
+
+다음 명령어를 사용하여 모든 필요한 라이브러리를 한 번에 설치할 수 있습니다:
 
 ```bash
 pip install PyQt6 pyqtgraph ccxt pandas
 ```
+
+ccxt.pro를 사용하려면 별도의 라이선스가 필요할 수 있습니다. 자세한 내용은 [ccxt 공식 문서](https://github.com/ccxt/ccxt)를 참조하세요.
 
 ## 실행 방법
 
@@ -42,8 +51,24 @@ pip install PyQt6 pyqtgraph ccxt pandas
 
 ## 프로젝트 구조
 
-*   `main.py`: 메인 애플리케이션 진입점.
-*   `ui_components.py`: `MainWindow` 클래스를 포함하며, 주 UI, 차트 설정 및 다른 구성 요소 통합을 처리합니다.
-*   `data_worker.py`: 별도의 스레드에서 WebSocket을 통해 거래소로부터 데이터를 가져오고 처리하는 `Worker` 및 `WorkerSignals` 클래스를 포함합니다.
-*   `custom_plot_items.py`: 맞춤형 차트 렌더링을 위한 `CandlestickItem`, `DateAxisItem`과 같은 사용자 정의 `pyqtgraph` 아이템을 정의합니다.
-*   `utils.py`: 콘솔 출력을 UI로 리디렉션하는 `Stream`과 같은 유틸리티 클래스를 포함합니다.
+*   `main.py`: 메인 애플리케이션 진입점. PyQt 애플리케이션을 초기화하고 MainWindow를 생성합니다.
+*   `ui_components.py`: `MainWindow` 클래스를 포함하며, 주 UI, 차트 설정 및 다른 구성 요소 통합을 처리합니다. 애플리케이션의 주요 UI 컴포넌트와 레이아웃을 정의합니다.
+*   `data_worker.py`: 별도의 스레드에서 WebSocket을 통해 거래소로부터 데이터를 가져오고 처리하는 `Worker` 및 `WorkerSignals` 클래스를 포함합니다. 데이터 수집과 처리 로직이 여기 구현되어 있습니다.
+*   `custom_plot_items.py`: 맞춤형 차트 렌더링을 위한 `CandlestickItem`, `DateAxisItem`과 같은 사용자 정의 `pyqtgraph` 아이템을 정의합니다. 캔들스틱 차트와 날짜 축의 시각적 표현을 담당합니다.
+*   `utils.py`: 콘솔 출력을 UI로 리디렉션하는 `Stream`과 같은 유틸리티 클래스와 다양한 헬퍼 함수를 포함합니다.
+
+## 기여 방법
+
+1.  이 저장소를 포크합니다.
+2.  새 기능 브랜치를 생성합니다 (`git checkout -b feature/amazing-feature`).
+3.  변경 사항을 커밋합니다 (`git commit -m 'Add some amazing feature'`).
+4.  브랜치에 푸시합니다 (`git push origin feature/amazing-feature`).
+5.  Pull Request를 생성합니다.
+
+## 라이선스
+
+이 프로젝트는 MIT 라이선스 하에 배포됩니다. 자세한 내용은 LICENSE 파일을 참조하세요.
+
+## 연락처
+
+질문이나 피드백이 있으시면 이슈를 등록해 주세요.

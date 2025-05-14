@@ -1,0 +1,44 @@
+# 파이썬 관련 파일
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.env
+.venv
+
+# 배포 관련 파일
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE 관련 파일
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 로그 및 데이터 파일
+logs/
+*.log
+*.csv
+*.json
+*.dat
+
+# OS 관련 파일
+.DS_Store
+Thumbs.db
